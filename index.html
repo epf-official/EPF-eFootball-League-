@@ -148,8 +148,8 @@ Object.assign(ICON, {
   rules:'<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7"/>',
   swap:'<path d="M7 7h12l-3-3M17 17H5l3 3"/>'
 });
-const NAV = [['','হোম','home'],['standings','টেবিল','table'],['fixtures','ফিক্সচার','cal'],['clubs','ক্লাব','club'],['players','প্লেয়ার','user'],['compare','তুলনা','vs'],['transfers','ট্রান্সফার','swap'],['news','নিউজ','news'],['rules','নিয়ম','rules']];
-const MORE = ['players','compare','transfers','news','rules','more','register','register-player','login','dashboard'];
+const NAV = [['','হোম','home'],['standings','টেবিল','table'],['fixtures','ফিক্সচার','cal'],['clubs','ক্লাব','club'],['players','প্লেয়ার','user'],['compare','তুলনা','vs'],['transfers','ট্রান্সফার','swap'],['trophies','ট্রফি','table'],['news','নিউজ','news'],['rules','নিয়ম','rules']];
+const MORE = ['players','compare','transfers','trophies','news','rules','more','register','register-player','login','dashboard'];
 const svg = k => `<svg viewBox="0 0 24 24">${ICON[k]}</svg>`;
 function drawNav(cur){
   const link = ([p,l,i], on) => `<a href="#/${p}" class="${on?'on':''}">${svg(i)}<span>${l}</span></a>`;
@@ -165,18 +165,19 @@ async function load(){
   S.season = se.data && se.data[0];
   const mq = db.from('matches').select('*').order('round').order('played_at');
   if (S.season) mq.eq('season_id', S.season.id);
-  const [cl, pl, ma, ne, st, tp, lu] = await Promise.all([
+  const [cl, pl, ma, ne, st, tp, lu, ss] = await Promise.all([
     db.from('clubs').select('*').order('name'),
     db.from('players_public').select('*'),
     mq,
     db.from('news').select('*').order('created_at', {ascending:false}).limit(20),
     db.from('settings').select('*'),
     db.from('transfers_public').select('*').order('id', {ascending:false}).limit(15),
-    db.from('match_lineups').select('*')
+    db.from('match_lineups').select('*'),
+    db.from('seasons').select('*').order('id', {ascending:false})
   ]);
   S.clubs = cl.data || []; S.players = pl.data || []; S.matches = ma.data || []; S.news = ne.data || [];
   S.settings = {}; (st.data || []).forEach(x => S.settings[x.key] = x.value);
-  S.transfers = tp.data || []; S.lineups = lu.data || [];
+  S.transfers = tp.data || []; S.lineups = lu.data || []; S.seasons = ss.data || [];
   const err = se.error || cl.error || ma.error;
   if (err) throw err;
 }
@@ -620,8 +621,39 @@ window.buyPlayer = async (pid, btn) => {
   alert('রিকোয়েস্ট পাঠানো হয়েছে। অ্যাডমিন পেমেন্ট যাচাই করে অনুমোদন দেবে।'); location.hash = '#/dashboard';
 };
 
+
+// ================= ট্রফি ক্যাবিনেট, চ্যাম্পিয়নদের তালিকা, নিয়মকানুন =================
+VIEWS.trophies = () => {
+  const done = (S.seasons || []).filter(x => x.champion_id);
+  const cnt = {}; done.forEach(x => cnt[x.champion_id] = (cnt[x.champion_id] || 0) + 1);
+  const cab = Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([id, n]) => { const c = club(+id); return c ? `<div class="card" style="text-align:center"><div style="display:flex;justify-content:center">${crest(c, true)}</div><h3 style="margin-top:8px">${esc(c.name)}</h3><div class="sc" style="display:inline-block;margin-top:8px">${n}টা টাইটেল</div></div>` : ''; }).join('');
+  const roll = done.map(x => { const c = club(x.champion_id), u = club(x.runner_up_id); return `<div class="card ar"><b>${esc(x.name)}</b><div class="acts"><span class="cl">${crest(c)}${c ? esc(c.name) : '?'}</span>${u ? `<span class="meta" style="margin:0">রানার্স-আপ: ${esc(u.name)}</span>` : ''}</div></div>`; }).join('');
+  return `<div class="wrap"><section><div class="sh"><h2>ট্রফি ক্যাবিনেট</h2></div><div class="grid">${cab || '<div class="empty">এখনো কোনো চ্যাম্পিয়ন ঘোষণা হয়নি।</div>'}</div></section>
+  <section><div class="sh"><h2>চ্যাম্পিয়নদের তালিকা</h2></div><div class="stack">${roll || '<div class="empty">সিজন শেষ হলে এখানে চ্যাম্পিয়ন আসবে।</div>'}</div></section></div>`;
+};
+VIEWS.rules = () => page('নিয়মকানুন', `<div class="card"><p style="white-space:pre-line">${esc((S.settings || {}).rules || 'নিয়মকানুন এখনো লেখা হয়নি।')}</p></div>`);
+
+ADT.seasons = async () => {
+  const r = await db.from('seasons').select('*').order('id', {ascending: false});
+  if (r.error) throw r.error;
+  const ap = S.clubs.filter(c => c.status === 'approved');
+  const opt = sel => '<option value="0">— নেই —</option>' + ap.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  return `<div class="card f"><h3>নতুন সিজন শুরু</h3>${inp('sn', 'সিজনের নাম')}<button class="btn fill" onclick="addSeason()">নতুন সিজন চালু করো</button></div><div class="stack" style="margin-top:12px">` +
+    (r.data || []).map(x => `<div class="card f"><div class="ar"><b>${esc(x.name)}</b><div class="acts">${x.is_active ? '<span class="tag main">সক্রিয়</span>' : `<button class="btn sm" type="button" onclick="adAct('season','activate',${x.id})">সক্রিয় করো</button>`}</div></div>
+    <div class="two"><label>চ্যাম্পিয়ন<select id="ch-${x.id}">${opt(x.champion_id)}</select></label><label>রানার্স-আপ<select id="ru-${x.id}">${opt(x.runner_up_id)}</select></label></div>
+    <button class="btn sm" type="button" onclick="saveChamp(${x.id})">ফলাফল সেভ করো</button></div>`).join('') + '</div>';
+};
+window.saveChamp = async id => {
+  const c = +document.getElementById('ch-' + id).value, u = +document.getElementById('ru-' + id).value;
+  if (c && c === u) return alert('চ্যাম্পিয়ন ও রানার্স-আপ আলাদা হতে হবে।');
+  if (adOk(await db.from('seasons').update({champion_id: c || null, runner_up_id: u || null}).eq('id', id))) { await load(); alert('সেভ হয়েছে।'); adminTab('seasons'); }
+};
+ADT.settings = async () => `<div class="card f"><h3>পেমেন্ট সেটিংস</h3>${inp('bk', 'bKash নাম্বার (ট্রান্সফারের টাকা এখানে আসবে)', 'tel', `value="${esc((S.settings || {}).bkash || '')}"`)}<button class="btn fill" onclick="saveBkash()">সেভ করো</button></div>
+  <div class="card f" style="margin-top:12px"><h3>নিয়মকানুন (সবাই দেখবে)</h3><textarea id="rl" rows="12" style="background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:11px;font:inherit;width:100%">${esc((S.settings || {}).rules || '')}</textarea><button class="btn fill" onclick="saveRules()">সেভ করো</button></div>`;
+window.saveRules = async () => { if (adOk(await db.from('settings').upsert({key: 'rules', value: document.getElementById('rl').value}))) { await load(); alert('সেভ হয়েছে।'); } };
+
 VIEWS.more = () => `<div class="wrap"><section><div class="sh"><h2>আরও</h2></div><div class="grid">` +
-  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['register-player','প্লেয়ার রেজিস্ট্রেশন','user'],['transfers','ট্রান্সফার মার্কেট','swap'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
+  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['register-player','প্লেয়ার রেজিস্ট্রেশন','user'],['transfers','ট্রান্সফার মার্কেট','swap'],['trophies','ট্রফি ক্যাবিনেট','table'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
   .map(([p,l,i]) => `<a class="card" href="#/${p}" style="display:flex;align-items:center;gap:12px;color:var(--gold2)"><span style="width:24px;height:24px;display:inline-block">${svg(i).replace('<svg','<svg style="width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8"')}</span><b>${l}</b></a>`).join('') + `</div></section></div>`;
 
 async function render(){
