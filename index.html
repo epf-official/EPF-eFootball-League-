@@ -149,7 +149,7 @@ Object.assign(ICON, {
   swap:'<path d="M7 7h12l-3-3M17 17H5l3 3"/>'
 });
 const NAV = [['','হোম','home'],['standings','টেবিল','table'],['fixtures','ফিক্সচার','cal'],['clubs','ক্লাব','club'],['players','প্লেয়ার','user'],['compare','তুলনা','vs'],['transfers','ট্রান্সফার','swap'],['trophies','ট্রফি','table'],['news','নিউজ','news'],['rules','নিয়ম','rules']];
-const MORE = ['players','compare','transfers','trophies','fame','shame','ballon','news','rules','more','register','register-player','login','dashboard'];
+const MORE = ['players','compare','transfers','trophies','fame','shame','ballon','billboard','market','news','rules','more','register','register-player','login','dashboard'];
 const svg = k => `<svg viewBox="0 0 24 24">${ICON[k]}</svg>`;
 function drawNav(cur){
   const link = ([p,l,i], on) => `<a href="#/${p}" class="${on?'on':''}">${svg(i)}<span>${l}</span></a>`;
@@ -165,7 +165,7 @@ async function load(){
   S.season = se.data && se.data[0];
   const mq = db.from('matches').select('*').order('round').order('played_at');
   if (S.season) mq.eq('season_id', S.season.id);
-  const [cl, pl, ma, ne, st, tp, lu, ss, hn] = await Promise.all([
+  const [cl, pl, ma, ne, st, tp, lu, ss, hn, bd, sh, sx] = await Promise.all([
     db.from('clubs').select('*').order('name'),
     db.from('players_public').select('*'),
     mq,
@@ -174,11 +174,14 @@ async function load(){
     db.from('transfers_public').select('*').order('id', {ascending:false}).limit(15),
     db.from('match_lineups').select('*'),
     db.from('seasons').select('*').order('id', {ascending:false}),
-    db.from('honors').select('*').order('id', {ascending:false})
+    db.from('honors').select('*').order('id', {ascending:false}),
+    db.from('billboard').select('*').order('id', {ascending:false}).limit(30),
+    db.from('share_holdings').select('*'),
+    db.from('share_trades').select('*').order('id', {ascending:false}).limit(15)
   ]);
   S.clubs = cl.data || []; S.players = pl.data || []; S.matches = ma.data || []; S.news = ne.data || [];
   S.settings = {}; (st.data || []).forEach(x => S.settings[x.key] = x.value);
-  S.transfers = tp.data || []; S.lineups = lu.data || []; S.seasons = ss.data || []; S.honors = hn.data || [];
+  S.transfers = tp.data || []; S.lineups = lu.data || []; S.seasons = ss.data || []; S.honors = hn.data || []; S.billboard = bd.data || []; S.holdings = sh.data || []; S.trades = sx.data || [];
   const err = se.error || cl.error || ma.error;
   if (err) throw err;
 }
@@ -232,7 +235,7 @@ const VIEWS = {
       <h1>আয়নাঘর</h1><div class="sub">eFootball League : হারলেই সোজা ভেতরে</div>
       <p>২ জনের ক্লাব, ২ বনাম ২ কো-অপ লড়াই। জিতলে উপরে, হারলে সোজা ভেতরে।</p>
       <div class="cta"><a class="btn fill" href="#/standings">পয়েন্ট টেবিল</a><a class="btn" href="#/fixtures">ফিক্সচার</a><a class="btn" href="#/register">ক্লাব রেজিস্ট্রেশন</a></div></div></div>
-    <div class="wrap"><section><div class="sh"><h2>পয়েন্ট টেবিল</h2><a href="#/standings">সব দেখো</a></div>${tableHTML(standings().slice(0,6))}</section>
+    <div class="wrap">${boardHTML(3)}<section><div class="sh"><h2>পয়েন্ট টেবিল</h2><a href="#/standings">সব দেখো</a></div>${tableHTML(standings().slice(0,6))}</section>
     <section><div class="sh"><h2>আসন্ন ম্যাচ</h2><a href="#/fixtures">সব দেখো</a></div><div class="stack">${up.map(fxHTML).join('') || '<div class="empty">এখনো কোনো ফিক্সচার নেই।</div>'}</div></section>
     <section><div class="sh"><h2>সাম্প্রতিক ফলাফল</h2></div><div class="stack">${done.map(fxHTML).join('') || '<div class="empty">এখনো কোনো ফলাফল নেই।</div>'}</div></section></div>`;
   },
@@ -372,7 +375,7 @@ VIEWS.dashboard = async () => {
   const res = m => { const a = m.home_club === my.id ? m.home_score : m.away_score, b = m.home_club === my.id ? m.away_score : m.home_score; return {a, b, r: a > b ? 'W' : a < b ? 'L' : 'D'}; };
   return page('ক্লাব ড্যাশবোর্ড', `
   <div class="card" style="display:flex;gap:14px;align-items:center">${crest(my, true)}<div><h3>${esc(my.name)}</h3><div class="meta" style="text-align:left">প্রেসিডেন্ট: ${esc(my.owner_name || '-')}</div>
-  <span class="tag ${my.status === 'approved' ? 'main' : ''}">${my.status === 'approved' ? 'অনুমোদিত' : 'অ্যাডমিন অ্যাপ্রুভালের অপেক্ষায়'}</span></div></div>
+  <span class="tag ${my.status === 'approved' ? 'main' : ''}">${my.status === 'approved' ? 'অনুমোদিত' : 'অ্যাডমিন অ্যাপ্রুভালের অপেক্ষায়'}</span> <a class="tag" href="#/market" style="color:var(--gold2)">কয়েন: ${my.coins ?? 0}</a></div></div>
   <div class="rd">স্কোয়াড</div><div class="card"><div class="sq" style="border:0;margin:0;padding:0">${squad.map(p => `<div><span>${esc(p.name)} ${p.is_captain ? '<span class="tag cap">ক্যাপ্টেন</span>' : ''}</span><span class="tag ${p.role === 'main' ? 'main' : ''}">${p.role === 'main' ? 'মেইন' : 'সাব'}${p.status === 'pending' ? ' · পেন্ডিং' : ''}</span></div>`).join('') || '<div class="meta">কোনো প্লেয়ার নেই</div>'}</div></div>
   <div class="rd">স্কোর সাবমিট</div>
   <div class="stack">${my.status !== 'approved' ? '<div class="empty">ক্লাব অনুমোদন হলে স্কোর পাঠাতে পারবে।</div>' : todo.map(m => `<div class="card f"><div class="fx"><div class="t">${crest(my)}<span>${esc(my.name)}</span></div><b class="disp" style="color:var(--gold2)">VS</b><div class="t"><span>${esc(opp(m).name)}</span>${crest(opp(m))}</div></div>
@@ -430,7 +433,7 @@ VIEWS['admin-epf'] = async () => {
   if (!USER) return page('অ্যাডমিন লগইন', `<form class="f card" style="max-width:420px" onsubmit="return adminLogIn(event)">${inp('em','অ্যাডমিন ইমেইল','email','required')}${inp('pw','পাসওয়ার্ড','password','required')}<button class="btn fill" type="submit">লগইন</button><div class="msg" id="msg"></div></form>`);
   const chk = await db.rpc('is_admin');
   if (!chk.data) return page('অ্যাডমিন', noItem('এই অ্যাকাউন্ট অ্যাডমিন নয়।') + '<button class="btn" onclick="logOut()" style="margin-top:16px">লগআউট</button>');
-  const tabs = [['clubs','ক্লাব'],['players','প্লেয়ার'],['scores','স্কোর'],['fixtures','ফিক্সচার'],['transfers','ট্রান্সফার'],['news','নিউজ'],['seasons','সিজন'],['honors','সম্মাননা'],['settings','সেটিংস']];
+  const tabs = [['clubs','ক্লাব'],['players','প্লেয়ার'],['scores','স্কোর'],['fixtures','ফিক্সচার'],['transfers','ট্রান্সফার'],['news','নিউজ'],['seasons','সিজন'],['billboard','বিলবোর্ড'],['honors','সম্মাননা'],['settings','সেটিংস']];
   return page('অ্যাডমিন প্যানেল', `<div class="tabs">${tabs.map(([k,l]) => `<button class="btn sm" id="tab-${k}" onclick="adminTab('${k}')">${l}</button>`).join('')}<button class="btn sm" onclick="logOut()">লগআউট</button></div><div id="adBody"></div>`);
 };
 window.adminLogIn = async e => {
@@ -526,11 +529,12 @@ window.adAct = async (kind, act, id) => {
   }
   else if (kind === 'transfer' && act === 'reject') r = await db.from('transfers').update({status: 'rejected'}).eq('id', id);
   else if (kind === 'player' && act === 'del') { if (!confirm('প্লেয়ার মুছবে?')) return; r = await db.from('players').delete().eq('id', id); }
-  else if (kind === 'match' && act === 'approve') r = await db.from('matches').update({status: 'approved'}).eq('id', id);
+  else if (kind === 'match' && act === 'approve') { const x = await db.rpc('approve_match', {mid: id}); if (x.error) return alert(x.error.message); if (x.data !== 'ok') return alert(x.data); r = null; }
   else if (kind === 'match' && act === 'reject') r = await db.from('matches').update({status: 'scheduled', home_score: null, away_score: null, screenshot_url: null}).eq('id', id);
   else if (kind === 'fixtures' && act === 'clear') { if (!confirm('খেলা হয়নি এমন সব ফিক্সচার মুছে যাবে। নিশ্চিত?')) return; r = await db.from('matches').delete().eq('status', 'scheduled'); }
   else if (kind === 'news' && act === 'del') r = await db.from('news').delete().eq('id', id);
   else if (kind === 'honor' && act === 'del') r = await db.from('honors').delete().eq('id', id);
+  else if (kind === 'board' && act === 'del') r = await db.from('billboard').delete().eq('id', id);
   else if (kind === 'season' && act === 'activate') {
     r = await db.from('seasons').update({is_active: false}).eq('is_active', true);
     if (!adOk(r)) return;
@@ -698,8 +702,66 @@ window.addHonor = async () => {
   if (adOk(await db.from('honors').insert({kind: document.getElementById('hk').value, title: t, note: val('hn') || null, player_id: n('hp'), club_id: n('hc'), season_id: n('hs')}))) { await load(); adminTab('honors'); }
 };
 
+
+// ================= বিলবোর্ড (ঘোষণা ও স্পন্সর) =================
+const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
+const boardCard = b => `<a class="card" ${safeUrl(b.link_url) ? `href="${esc(safeUrl(b.link_url))}" target="_blank" rel="noopener"` : ''} style="display:block;overflow:hidden;padding:0">${safeUrl(b.image_url) ? `<img src="${esc(safeUrl(b.image_url))}" alt="" loading="lazy" style="width:100%;max-height:220px;object-fit:cover;display:block">` : ''}<div style="padding:14px"><h3>${esc(b.title)}</h3>${b.body ? `<p style="margin-top:6px;color:#c9c3b2;white-space:pre-line">${esc(b.body)}</p>` : ''}</div></a>`;
+const boardHTML = n => { const L = (S.billboard || []).slice(0, n); return L.length ? `<section><div class="sh"><h2>বিলবোর্ড</h2><a href="#/billboard">সব দেখো</a></div><div class="grid">${L.map(boardCard).join('')}</div></section>` : ''; };
+VIEWS.billboard = () => page('বিলবোর্ড', `<div class="grid">${(S.billboard || []).map(boardCard).join('') || '<div class="empty">এখনো কোনো ঘোষণা নেই।</div>'}</div>`);
+
+ADT.billboard = async () => {
+  const r = await db.from('billboard').select('*').order('id', {ascending: false});
+  if (r.error) throw r.error;
+  return `<div class="card f"><h3>নতুন ঘোষণা / স্পন্সর</h3>${inp('bt', 'শিরোনাম')}${inp('bb', 'বিস্তারিত (ঐচ্ছিক)')}${inp('bi', 'ছবি (ঐচ্ছিক)', 'file', 'accept="image/*"')}${inp('bl', 'লিংক (ঐচ্ছিক, https:// দিয়ে)', 'url')}<button class="btn fill" onclick="addBoard(this)">প্রকাশ করো</button></div><div class="stack" style="margin-top:12px">` +
+    ((r.data || []).map(b => `<div class="card ar"><b>${esc(b.title)}</b><button class="btn sm" onclick="adAct('board','del',${b.id})">মুছো</button></div>`).join('') || noItem('এখনো কিছু নেই।')) + '</div>';
+};
+window.addBoard = async btn => {
+  const t = val('bt'); if (!t) return alert('শিরোনাম দাও।');
+  btn.disabled = true;
+  try {
+    const f = document.getElementById('bi').files[0];
+    const image_url = f ? await uploadFile('club-logos', USER.id, f) : null;
+    if (adOk(await db.from('billboard').insert({title: t, body: val('bb') || null, image_url, link_url: val('bl') || null}))) { await load(); adminTab('billboard'); return; }
+  } catch (e) { alert(e.message); }
+  btn.disabled = false;
+};
+
+
+// ================= শেয়ার মার্কেট (ভার্চুয়াল কয়েন) =================
+VIEWS.market = async () => {
+  if (DEMO) return page('শেয়ার মার্কেট', needKeys);
+  MYCLUB = USER ? (await db.from('clubs').select('*').eq('owner_id', USER.id).maybeSingle()).data : null;
+  const can = MYCLUB && MYCLUB.status === 'approved';
+  const price = p => p.share_price || 100;
+  const hold = pid => { const h = (S.holdings || []).find(x => MYCLUB && x.club_id === MYCLUB.id && x.player_id === pid); return h ? h.qty : 0; };
+  const worth = c => (c.coins || 0) + (S.holdings || []).filter(h => h.club_id === c.id).reduce((t, h) => { const p = S.players.find(x => x.id === h.player_id); return t + (p ? h.qty * price(p) : 0); }, 0);
+  const rich = S.clubs.filter(c => c.status === 'approved').map(c => ({c, w: worth(c)})).sort((a, b) => b.w - a.w).slice(0, 5);
+  const rows = S.players.slice().sort((a, b) => price(b) - price(a));
+  const chg = p => { const d = price(p) - (p.prev_price ?? price(p)); return d > 0 ? `<small style="color:var(--win)">▲ ${d}</small>` : d < 0 ? `<small style="color:var(--loss)">▼ ${-d}</small>` : '<small style="color:var(--mute)">–</small>'; };
+  const trades = (S.trades || []).map(t => { const c = club(t.club_id), p = S.players.find(x => x.id === t.player_id); return c && p ? `<div class="card ar"><span>${esc(c.name)} ${t.qty > 0 ? 'কিনেছে' : 'বেচেছে'} ${Math.abs(t.qty)}টা ${esc(p.name)}-এর শেয়ার</span><span class="tag">${t.price} কয়েন</span></div>` : ''; }).join('');
+  return page('শেয়ার মার্কেট', `
+  <p class="meta" style="text-align:left;margin-bottom:12px">এটা ভার্চুয়াল কয়েনের খেলা, আসল টাকা না। প্লেয়ারের দল জিতলে তার শেয়ারের দাম ৫% বাড়ে, হারলে ৫% কমে (লাইনআপে থাকলে)। কম দামে কিনে বেশি দামে বেচে কয়েন বাড়াও।</p>
+  ${can ? `<div class="card" style="margin-bottom:12px"><div class="meta" style="text-align:left">তোমার ব্যালান্স</div><h3 style="color:var(--gold2)">${MYCLUB.coins} কয়েন</h3></div>` : ''}
+  <div class="rd">সবচেয়ে ধনী ক্লাব</div><div class="stack">${rich.map((x, i) => `<div class="card ar"><span class="cl">${i + 1}. ${crest(x.c)}${esc(x.c.name)}</span><span class="tag main">${x.w} কয়েন</span></div>`).join('') || '<div class="empty">কোনো ক্লাব নেই।</div>'}</div>
+  <div class="rd">প্লেয়ার শেয়ার</div><div class="stack">${rows.map(p => { const c = club(p.club_id); return `<details class="card"><summary style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span class="cl">${crest(c)}<span>${esc(p.name)}<br><small style="color:var(--mute);font-weight:400">${c ? esc(c.name) : 'ফ্রি এজেন্ট'}</small></span></span><span style="text-align:right"><b style="color:var(--gold2)">${price(p)}</b> কয়েন<br>${chg(p)}</span></summary>
+    ${!USER ? '<div class="sq"><a href="#/login" style="color:var(--gold2)">ট্রেড করতে ক্যাপ্টেন হিসেবে লগইন করো</a></div>'
+      : !can ? '<div class="sq">শুধু অনুমোদিত ক্লাবের ওনার ট্রেড করতে পারবে।</div>'
+      : `<div class="sq f"><div class="meta" style="text-align:left">তোমার শেয়ার: ${hold(p.id)}টা</div>${inp('q-' + p.id, 'কয়টা শেয়ার', 'number', 'min="1" max="100" value="1"')}<div class="acts"><button class="btn fill sm" onclick="tradeShare(${p.id}, 1, this)">কিনো</button><button class="btn sm" onclick="tradeShare(${p.id}, -1, this)">বেচো</button></div></div>`}</details>`; }).join('') || '<div class="empty">এখনো কোনো প্লেয়ার নেই।</div>'}</div>
+  <div class="rd">সাম্প্রতিক ট্রেড</div><div class="stack">${trades || '<div class="empty">এখনো কোনো ট্রেড হয়নি।</div>'}</div>`);
+};
+window.tradeShare = async (pid, sign, btn) => {
+  const q = parseInt(val('q-' + pid), 10);
+  if (!q || q < 1 || q > 100) return alert('১ থেকে ১০০ এর মধ্যে সংখ্যা দাও।');
+  btn.disabled = true;
+  const r = await db.rpc('trade_share', {pid, q: sign * q});
+  btn.disabled = false;
+  if (r.error) return alert(r.error.message);
+  if (r.data !== 'ok') return alert(r.data);
+  await load(); render();
+};
+
 VIEWS.more = () => `<div class="wrap"><section><div class="sh"><h2>আরও</h2></div><div class="grid">` +
-  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['register-player','প্লেয়ার রেজিস্ট্রেশন','user'],['transfers','ট্রান্সফার মার্কেট','swap'],['trophies','ট্রফি ক্যাবিনেট','table'],['ballon',"Ballon d'Or",'table'],['fame','Hall of Fame','user'],['shame','Hall of Shame','rules'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
+  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['register-player','প্লেয়ার রেজিস্ট্রেশন','user'],['transfers','ট্রান্সফার মার্কেট','swap'],['trophies','ট্রফি ক্যাবিনেট','table'],['market','শেয়ার মার্কেট','swap'],['billboard','বিলবোর্ড','news'],['ballon',"Ballon d'Or",'table'],['fame','Hall of Fame','user'],['shame','Hall of Shame','rules'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
   .map(([p,l,i]) => `<a class="card" href="#/${p}" style="display:flex;align-items:center;gap:12px;color:var(--gold2)"><span style="width:24px;height:24px;display:inline-block">${svg(i).replace('<svg','<svg style="width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8"')}</span><b>${l}</b></a>`).join('') + `</div></section></div>`;
 
 async function render(){
