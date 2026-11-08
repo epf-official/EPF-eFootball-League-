@@ -647,7 +647,14 @@ ADT.seasons = async () => {
   return `<div class="card f"><h3>নতুন সিজন শুরু</h3>${inp('sn', 'সিজনের নাম')}<button class="btn fill" onclick="addSeason()">নতুন সিজন চালু করো</button></div><div class="stack" style="margin-top:12px">` +
     (r.data || []).map(x => `<div class="card f"><div class="ar"><b>${esc(x.name)}</b><div class="acts">${x.is_active ? '<span class="tag main">সক্রিয়</span>' : `<button class="btn sm" type="button" onclick="adAct('season','activate',${x.id})">সক্রিয় করো</button>`}</div></div>
     <div class="two"><label>চ্যাম্পিয়ন<select id="ch-${x.id}">${opt(x.champion_id)}</select></label><label>রানার্স-আপ<select id="ru-${x.id}">${opt(x.runner_up_id)}</select></label></div>
-    <button class="btn sm" type="button" onclick="saveChamp(${x.id})">ফলাফল সেভ করো</button></div>`).join('') + '</div>';
+    <div class="acts"><button class="btn sm" type="button" onclick="saveChamp(${x.id})">ফলাফল সেভ করো</button>${x.is_active ? `<button class="btn fill sm" type="button" onclick="autoChamp(${x.id})">টেবিল দেখে অটো বসাও</button>` : ''}</div></div>`).join('') + '</div>';
+};
+window.autoChamp = async id => {
+  const T = standings();
+  if (T.length < 2 || !T[0].p) return alert('এখনো অনুমোদিত ম্যাচ নেই।');
+  const left = S.matches.filter(m => m.status !== 'approved').length;
+  if (left && !confirm(left + 'টা ম্যাচ এখনো বাকি বা অনুমোদন হয়নি। তবুও টেবিলের শীর্ষ ২ ক্লাবকে বসাবে?')) return;
+  if (adOk(await db.from('seasons').update({champion_id: T[0].c.id, runner_up_id: T[1].c.id}).eq('id', id))) { await load(); alert('চ্যাম্পিয়ন: ' + T[0].c.name + '\nরানার্স-আপ: ' + T[1].c.name); adminTab('seasons'); }
 };
 window.saveChamp = async id => {
   const c = +document.getElementById('ch-' + id).value, u = +document.getElementById('ru-' + id).value;
