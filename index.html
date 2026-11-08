@@ -149,7 +149,7 @@ Object.assign(ICON, {
   swap:'<path d="M7 7h12l-3-3M17 17H5l3 3"/>'
 });
 const NAV = [['','হোম','home'],['standings','টেবিল','table'],['fixtures','ফিক্সচার','cal'],['clubs','ক্লাব','club'],['players','প্লেয়ার','user'],['compare','তুলনা','vs'],['transfers','ট্রান্সফার','swap'],['trophies','ট্রফি','table'],['news','নিউজ','news'],['rules','নিয়ম','rules']];
-const MORE = ['players','compare','transfers','trophies','news','rules','more','register','register-player','login','dashboard'];
+const MORE = ['players','compare','transfers','trophies','fame','shame','ballon','news','rules','more','register','register-player','login','dashboard'];
 const svg = k => `<svg viewBox="0 0 24 24">${ICON[k]}</svg>`;
 function drawNav(cur){
   const link = ([p,l,i], on) => `<a href="#/${p}" class="${on?'on':''}">${svg(i)}<span>${l}</span></a>`;
@@ -165,7 +165,7 @@ async function load(){
   S.season = se.data && se.data[0];
   const mq = db.from('matches').select('*').order('round').order('played_at');
   if (S.season) mq.eq('season_id', S.season.id);
-  const [cl, pl, ma, ne, st, tp, lu, ss] = await Promise.all([
+  const [cl, pl, ma, ne, st, tp, lu, ss, hn] = await Promise.all([
     db.from('clubs').select('*').order('name'),
     db.from('players_public').select('*'),
     mq,
@@ -173,11 +173,12 @@ async function load(){
     db.from('settings').select('*'),
     db.from('transfers_public').select('*').order('id', {ascending:false}).limit(15),
     db.from('match_lineups').select('*'),
-    db.from('seasons').select('*').order('id', {ascending:false})
+    db.from('seasons').select('*').order('id', {ascending:false}),
+    db.from('honors').select('*').order('id', {ascending:false})
   ]);
   S.clubs = cl.data || []; S.players = pl.data || []; S.matches = ma.data || []; S.news = ne.data || [];
   S.settings = {}; (st.data || []).forEach(x => S.settings[x.key] = x.value);
-  S.transfers = tp.data || []; S.lineups = lu.data || []; S.seasons = ss.data || [];
+  S.transfers = tp.data || []; S.lineups = lu.data || []; S.seasons = ss.data || []; S.honors = hn.data || [];
   const err = se.error || cl.error || ma.error;
   if (err) throw err;
 }
@@ -429,7 +430,7 @@ VIEWS['admin-epf'] = async () => {
   if (!USER) return page('অ্যাডমিন লগইন', `<form class="f card" style="max-width:420px" onsubmit="return adminLogIn(event)">${inp('em','অ্যাডমিন ইমেইল','email','required')}${inp('pw','পাসওয়ার্ড','password','required')}<button class="btn fill" type="submit">লগইন</button><div class="msg" id="msg"></div></form>`);
   const chk = await db.rpc('is_admin');
   if (!chk.data) return page('অ্যাডমিন', noItem('এই অ্যাকাউন্ট অ্যাডমিন নয়।') + '<button class="btn" onclick="logOut()" style="margin-top:16px">লগআউট</button>');
-  const tabs = [['clubs','ক্লাব'],['players','প্লেয়ার'],['scores','স্কোর'],['fixtures','ফিক্সচার'],['transfers','ট্রান্সফার'],['news','নিউজ'],['seasons','সিজন'],['settings','সেটিংস']];
+  const tabs = [['clubs','ক্লাব'],['players','প্লেয়ার'],['scores','স্কোর'],['fixtures','ফিক্সচার'],['transfers','ট্রান্সফার'],['news','নিউজ'],['seasons','সিজন'],['honors','সম্মাননা'],['settings','সেটিংস']];
   return page('অ্যাডমিন প্যানেল', `<div class="tabs">${tabs.map(([k,l]) => `<button class="btn sm" id="tab-${k}" onclick="adminTab('${k}')">${l}</button>`).join('')}<button class="btn sm" onclick="logOut()">লগআউট</button></div><div id="adBody"></div>`);
 };
 window.adminLogIn = async e => {
@@ -529,6 +530,7 @@ window.adAct = async (kind, act, id) => {
   else if (kind === 'match' && act === 'reject') r = await db.from('matches').update({status: 'scheduled', home_score: null, away_score: null, screenshot_url: null}).eq('id', id);
   else if (kind === 'fixtures' && act === 'clear') { if (!confirm('খেলা হয়নি এমন সব ফিক্সচার মুছে যাবে। নিশ্চিত?')) return; r = await db.from('matches').delete().eq('status', 'scheduled'); }
   else if (kind === 'news' && act === 'del') r = await db.from('news').delete().eq('id', id);
+  else if (kind === 'honor' && act === 'del') r = await db.from('honors').delete().eq('id', id);
   else if (kind === 'season' && act === 'activate') {
     r = await db.from('seasons').update({is_active: false}).eq('is_active', true);
     if (!adOk(r)) return;
@@ -652,8 +654,52 @@ ADT.settings = async () => `<div class="card f"><h3>পেমেন্ট সে
   <div class="card f" style="margin-top:12px"><h3>নিয়মকানুন (সবাই দেখবে)</h3><textarea id="rl" rows="12" style="background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:11px;font:inherit;width:100%">${esc((S.settings || {}).rules || '')}</textarea><button class="btn fill" onclick="saveRules()">সেভ করো</button></div>`;
 window.saveRules = async () => { if (adOk(await db.from('settings').upsert({key: 'rules', value: document.getElementById('rl').value}))) { await load(); alert('সেভ হয়েছে।'); } };
 
+
+// ================= Ballon d'Or, Hall of Fame, Hall of Shame =================
+const honorPage = (kind, title, sub, autoHTML) => {
+  const L = (S.honors || []).filter(h => h.kind === kind);
+  const border = kind === 'shame' ? 'var(--loss)' : 'var(--gold)';
+  const card = h => {
+    const p = S.players.find(x => x.id === h.player_id), c = club(h.club_id || (p && p.club_id)), se = (S.seasons || []).find(x => x.id === h.season_id);
+    const meta = [p ? esc(p.name) : '', c ? esc(c.name) : '', se ? esc(se.name) : ''].filter(Boolean).join(' · ');
+    return `<div class="card" style="display:flex;gap:12px;align-items:center;border-color:${border}">${c ? crest(c, true) : ''}<div><h3>${esc(h.title)}</h3><div class="meta" style="text-align:left">${meta}</div>${h.note ? `<p style="margin-top:6px;color:#c9c3b2">${esc(h.note)}</p>` : ''}</div></div>`;
+  };
+  return page(title, `<p class="meta" style="text-align:left;margin-bottom:12px">${sub}</p>${autoHTML || ''}<div class="stack">${L.map(card).join('') || '<div class="empty">এখনো কিছু যোগ হয়নি।</div>'}</div>`);
+};
+const statCard = (label, r, val, border) => r ? `<div class="card" style="display:flex;gap:12px;align-items:center;margin-bottom:12px;border-color:${border}">${crest(r.c, true)}<div><div class="meta" style="text-align:left">${label}</div><h3>${esc(r.c.name)}</h3><div class="sc" style="display:inline-block;margin-top:6px">${val}</div></div></div>` : '';
+VIEWS.ballon = () => honorPage('ballon', "Ballon d'Or", 'প্রতি সিজনের সেরা প্লেয়ার।');
+VIEWS.fame = () => {
+  const T = standings().filter(r => r.p > 0), best = T.slice().sort((a, b) => b.w - a.w || (b.gf - b.ga) - (a.gf - a.ga))[0];
+  return honorPage('fame', 'Hall of Fame', 'লিগের কিংবদন্তিরা।', best ? statCard('এই সিজনে সবচেয়ে বেশি জয়', best, best.w + ' জয়', 'var(--gold)') : '');
+};
+VIEWS.shame = () => {
+  const T = standings().filter(r => r.p > 0), worst = T.slice().sort((a, b) => b.l - a.l || (a.gf - a.ga) - (b.gf - b.ga))[0];
+  return honorPage('shame', 'Hall of Shame', 'হারলেই সোজা ভেতরে। আয়নাঘরের বাসিন্দারা।', worst ? statCard('এখন আয়নাঘরে: সবচেয়ে বেশি হার', worst, worst.l + ' হার', 'var(--loss)') : '');
+};
+
+ADT.honors = async () => {
+  const r = await db.from('honors').select('*').order('id', {ascending: false});
+  if (r.error) throw r.error;
+  const kn = {ballon: "Ballon d'Or", fame: 'Hall of Fame', shame: 'Hall of Shame'};
+  const none = '<option value="0">— নেই —</option>';
+  const po = none + S.players.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const co = none + S.clubs.filter(c => c.status === 'approved').map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const so = none + (S.seasons || []).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('');
+  return `<div class="card f"><h3>নতুন সম্মাননা</h3>
+    <label>ধরন<select id="hk"><option value="ballon">Ballon d'Or</option><option value="fame">Hall of Fame</option><option value="shame">Hall of Shame</option></select></label>
+    ${inp('ht', 'শিরোনাম (যেমন: সিজনের সেরা প্লেয়ার)')}${inp('hn', 'নোট (ঐচ্ছিক)')}
+    <label>প্লেয়ার<select id="hp">${po}</select></label><label>ক্লাব<select id="hc">${co}</select></label><label>সিজন<select id="hs">${so}</select></label>
+    <button class="btn fill" onclick="addHonor()">যোগ করো</button></div><div class="stack" style="margin-top:12px">` +
+    ((r.data || []).map(h => `<div class="card ar"><div><b>${esc(h.title)}</b> <span class="tag">${kn[h.kind] || h.kind}</span></div><button class="btn sm" onclick="adAct('honor','del',${h.id})">মুছো</button></div>`).join('') || noItem('এখনো কিছু নেই।')) + '</div>';
+};
+window.addHonor = async () => {
+  const t = val('ht'); if (!t) return alert('শিরোনাম দাও।');
+  const n = id => +document.getElementById(id).value || null;
+  if (adOk(await db.from('honors').insert({kind: document.getElementById('hk').value, title: t, note: val('hn') || null, player_id: n('hp'), club_id: n('hc'), season_id: n('hs')}))) { await load(); adminTab('honors'); }
+};
+
 VIEWS.more = () => `<div class="wrap"><section><div class="sh"><h2>আরও</h2></div><div class="grid">` +
-  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['register-player','প্লেয়ার রেজিস্ট্রেশন','user'],['transfers','ট্রান্সফার মার্কেট','swap'],['trophies','ট্রফি ক্যাবিনেট','table'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
+  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['register-player','প্লেয়ার রেজিস্ট্রেশন','user'],['transfers','ট্রান্সফার মার্কেট','swap'],['trophies','ট্রফি ক্যাবিনেট','table'],['ballon',"Ballon d'Or",'table'],['fame','Hall of Fame','user'],['shame','Hall of Shame','rules'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
   .map(([p,l,i]) => `<a class="card" href="#/${p}" style="display:flex;align-items:center;gap:12px;color:var(--gold2)"><span style="width:24px;height:24px;display:inline-block">${svg(i).replace('<svg','<svg style="width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8"')}</span><b>${l}</b></a>`).join('') + `</div></section></div>`;
 
 async function render(){
