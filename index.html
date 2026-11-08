@@ -165,17 +165,18 @@ async function load(){
   S.season = se.data && se.data[0];
   const mq = db.from('matches').select('*').order('round').order('played_at');
   if (S.season) mq.eq('season_id', S.season.id);
-  const [cl, pl, ma, ne, st, tp] = await Promise.all([
+  const [cl, pl, ma, ne, st, tp, lu] = await Promise.all([
     db.from('clubs').select('*').order('name'),
     db.from('players_public').select('*'),
     mq,
     db.from('news').select('*').order('created_at', {ascending:false}).limit(20),
     db.from('settings').select('*'),
-    db.from('transfers_public').select('*').order('id', {ascending:false}).limit(15)
+    db.from('transfers_public').select('*').order('id', {ascending:false}).limit(15),
+    db.from('match_lineups').select('*')
   ]);
   S.clubs = cl.data || []; S.players = pl.data || []; S.matches = ma.data || []; S.news = ne.data || [];
   S.settings = {}; (st.data || []).forEach(x => S.settings[x.key] = x.value);
-  S.transfers = tp.data || [];
+  S.transfers = tp.data || []; S.lineups = lu.data || [];
   const err = se.error || cl.error || ma.error;
   if (err) throw err;
 }
@@ -210,8 +211,15 @@ function fxHTML(m){
   if (!h || !a) return '';
   const mid = m.status === 'approved' ? `<div class="sc">${m.home_score} - ${m.away_score}</div>`
     : m.status === 'pending' ? `<div class="sc pend">অনুমোদনের অপেক্ষায়</div>` : `<div class="sc pend">VS</div>`;
-  return `<div class="card"><div class="fx"><div class="t">${crest(h)}<span>${esc(h.name)}</span></div>${mid}<div class="t"><span>${esc(a.name)}</span>${crest(a)}</div></div><div class="meta">${m.status==='approved'?'শেষ':when(m.played_at)}</div></div>`;
+  return `<div class="card"><div class="fx"><div class="t">${crest(h)}<span>${esc(h.name)}</span></div>${mid}<div class="t"><span>${esc(a.name)}</span>${crest(a)}</div></div>${lineRow(m, h, a)}<div class="meta">${m.status==='approved'?'শেষ':when(m.played_at)}</div></div>`;
 }
+const lineRow = (m, h, a) => {
+  const L = S.lineups || [];
+  if (!L.some(y => y.match_id === m.id)) return '';
+  const nm = id => { const p = S.players.find(z => z.id === id); return p ? esc(p.name) : '?'; };
+  const f = c => { const x = L.find(y => y.match_id === m.id && y.club_id === c.id); return x ? nm(x.p1) + ' + ' + nm(x.p2) : '—'; };
+  return `<div class="fx" style="margin-top:8px;font-size:12px;color:var(--mute)"><div>${f(h)}</div><span>2v2</span><div style="text-align:right">${f(a)}</div></div>`;
+};
 const newsHTML = n => `<article class="card news"><time>${new Date(n.created_at).toLocaleDateString('bn-BD',{timeZone:'Asia/Dhaka',dateStyle:'long'})}</time><h3>${esc(n.title)}</h3><p>${esc(n.body)}</p></article>`;
 
 const VIEWS = {
@@ -366,6 +374,7 @@ VIEWS.dashboard = async () => {
   <div class="rd">স্কোয়াড</div><div class="card"><div class="sq" style="border:0;margin:0;padding:0">${squad.map(p => `<div><span>${esc(p.name)} ${p.is_captain ? '<span class="tag cap">ক্যাপ্টেন</span>' : ''}</span><span class="tag ${p.role === 'main' ? 'main' : ''}">${p.role === 'main' ? 'মেইন' : 'সাব'}${p.status === 'pending' ? ' · পেন্ডিং' : ''}</span></div>`).join('') || '<div class="meta">কোনো প্লেয়ার নেই</div>'}</div></div>
   <div class="rd">স্কোর সাবমিট</div>
   <div class="stack">${my.status !== 'approved' ? '<div class="empty">ক্লাব অনুমোদন হলে স্কোর পাঠাতে পারবে।</div>' : todo.map(m => `<div class="card f"><div class="fx"><div class="t">${crest(my)}<span>${esc(my.name)}</span></div><b class="disp" style="color:var(--gold2)">VS</b><div class="t"><span>${esc(opp(m).name)}</span>${crest(opp(m))}</div></div>
+    ${lineupForm(m, my, squad)}
     <div class="two">${inp('g1-' + m.id, 'আমাদের গোল', 'number', 'min="0" value="0"')}${inp('g2-' + m.id, 'প্রতিপক্ষের গোল', 'number', 'min="0" value="0"')}</div>
     ${inp('sh-' + m.id, 'স্ক্রিনশট (ঐচ্ছিক)', 'file', 'accept="image/*"')}
     <button class="btn fill" onclick="subScore(${m.id}, this)">স্কোর পাঠাও</button></div>`).join('') || '<div class="empty">জমা দেওয়ার মতো কোনো ম্যাচ নেই।</div>'}</div>
@@ -374,6 +383,22 @@ VIEWS.dashboard = async () => {
   <div class="rd">ট্রান্সফার রিকোয়েস্ট</div>
   <div class="stack">${(tr.data || []).map(t => `<div class="card ar"><span>${esc((S.players.find(p => p.id === t.player_id) || {}).name || 'প্লেয়ার #' + t.player_id)} · ${t.amount}৳</span><span class="tag">${t.status === 'approved' ? 'অনুমোদিত' : t.status === 'rejected' ? 'বাতিল' : 'পেন্ডিং'}</span></div>`).join('') || '<div class="empty">কোনো রিকোয়েস্ট নেই। <a href="#/transfers" style="color:var(--gold2)">ট্রান্সফার মার্কেটে যাও</a></div>'}</div>
   ${out}`);
+};
+const lineupForm = (m, my, squad) => {
+  const ap = squad.filter(p => p.status !== 'pending');
+  if (ap.length < 2) return '<div class="meta" style="text-align:left">লাইনআপ দিতে কমপক্ষে ২ জন অনুমোদিত প্লেয়ার লাগবে।</div>';
+  const cur = (S.lineups || []).find(x => x.match_id === m.id && x.club_id === my.id) || {};
+  const opt = sel => ap.map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.name)}${p.role === 'sub' ? ' (সাব)' : ''}</option>`).join('');
+  return `<h3>এই ম্যাচে কে কে খেলবে (২ বনাম ২)</h3><div class="two"><label>প্লেয়ার ১<select id="lu1-${m.id}">${opt(cur.p1 || ap[0].id)}</select></label><label>প্লেয়ার ২<select id="lu2-${m.id}">${opt(cur.p2 || ap[1].id)}</select></label></div><button class="btn sm" type="button" onclick="saveLineup(${m.id}, this)">${cur.p1 ? 'লাইনআপ বদলাও' : 'লাইনআপ সেভ করো'}</button>`;
+};
+window.saveLineup = async (mid, btn) => {
+  const p1 = +document.getElementById('lu1-' + mid).value, p2 = +document.getElementById('lu2-' + mid).value;
+  if (!p1 || !p2 || p1 === p2) return alert('দুইজন আলাদা প্লেয়ার বেছে নাও।');
+  btn.disabled = true;
+  const r = await db.from('match_lineups').upsert({match_id: mid, club_id: MYCLUB.id, p1, p2}, {onConflict: 'match_id,club_id'});
+  btn.disabled = false;
+  if (r.error) return alert(r.error.message);
+  await load(); alert('লাইনআপ সেভ হয়েছে।'); render();
 };
 window.subScore = async (id, btn) => {
   const m = S.matches.find(x => x.id === id), mine = parseInt(val('g1-' + id), 10), opp = parseInt(val('g2-' + id), 10);
