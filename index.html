@@ -145,10 +145,11 @@ Object.assign(ICON, {
   user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
   vs:'<path d="M4 6h7M4 12h7M4 18h7M15 6l5 6-5 6"/>',
   more:'<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
-  rules:'<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7"/>'
+  rules:'<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h7"/>',
+  swap:'<path d="M7 7h12l-3-3M17 17H5l3 3"/>'
 });
-const NAV = [['','হোম','home'],['standings','টেবিল','table'],['fixtures','ফিক্সচার','cal'],['clubs','ক্লাব','club'],['players','প্লেয়ার','user'],['compare','তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়ম','rules']];
-const MORE = ['players','compare','news','rules','more','register','login','dashboard'];
+const NAV = [['','হোম','home'],['standings','টেবিল','table'],['fixtures','ফিক্সচার','cal'],['clubs','ক্লাব','club'],['players','প্লেয়ার','user'],['compare','তুলনা','vs'],['transfers','ট্রান্সফার','swap'],['news','নিউজ','news'],['rules','নিয়ম','rules']];
+const MORE = ['players','compare','transfers','news','rules','more','register','register-player','login','dashboard'];
 const svg = k => `<svg viewBox="0 0 24 24">${ICON[k]}</svg>`;
 function drawNav(cur){
   const link = ([p,l,i], on) => `<a href="#/${p}" class="${on?'on':''}">${svg(i)}<span>${l}</span></a>`;
@@ -164,13 +165,17 @@ async function load(){
   S.season = se.data && se.data[0];
   const mq = db.from('matches').select('*').order('round').order('played_at');
   if (S.season) mq.eq('season_id', S.season.id);
-  const [cl, pl, ma, ne] = await Promise.all([
+  const [cl, pl, ma, ne, st, tp] = await Promise.all([
     db.from('clubs').select('*').order('name'),
     db.from('players_public').select('*'),
     mq,
-    db.from('news').select('*').order('created_at', {ascending:false}).limit(20)
+    db.from('news').select('*').order('created_at', {ascending:false}).limit(20),
+    db.from('settings').select('*'),
+    db.from('transfers_public').select('*').order('id', {ascending:false}).limit(15)
   ]);
   S.clubs = cl.data || []; S.players = pl.data || []; S.matches = ma.data || []; S.news = ne.data || [];
+  S.settings = {}; (st.data || []).forEach(x => S.settings[x.key] = x.value);
+  S.transfers = tp.data || [];
   const err = se.error || cl.error || ma.error;
   if (err) throw err;
 }
@@ -341,7 +346,13 @@ VIEWS.dashboard = async () => {
   ]);
   const my = c.data; MYCLUB = my;
   const out = '<button class="btn" onclick="logOut()" style="margin-top:20px">লগআউট</button>';
-  if (!my) return page('ড্যাশবোর্ড', '<div class="empty">এই অ্যাকাউন্টে কোনো ক্লাব পাওয়া যায়নি।</div>' + out);
+  if (!my) {
+    const pl = (ps.data || [])[0];
+    if (!pl) return page('ড্যাশবোর্ড', '<div class="empty">এই অ্যাকাউন্টে ক্লাব বা প্লেয়ার প্রোফাইল পাওয়া যায়নি।</div>' + out);
+    const pc = club(pl.club_id);
+    return page('প্লেয়ার প্রোফাইল', `<div class="card"><h3>${esc(pl.name)}</h3><div class="meta" style="text-align:left">UID: ${esc(pl.efootball_uid)} · ${esc(pl.device || '')}</div><div class="acts" style="margin-top:10px"><span class="tag ${pl.status === 'approved' ? 'main' : ''}">${pl.status === 'approved' ? 'অনুমোদিত' : 'অ্যাডমিন অ্যাপ্রুভালের অপেক্ষায়'}</span><span class="tag">${pc ? esc(pc.name) : 'ফ্রি এজেন্ট'}</span><span class="tag">মূল্য: ${pl.value || 0}৳</span></div></div>` + out);
+  }
+  const tr = await db.from('transfers').select('*').eq('club_id', my.id).order('id', {ascending: false});
   const squad = S.players.filter(p => p.club_id === my.id);
   (ps.data || []).filter(p => p.club_id === my.id && !squad.some(x => x.id === p.id)).forEach(p => squad.push(p));
   const mm = S.matches.filter(m => m.home_club === my.id || m.away_club === my.id);
@@ -360,6 +371,8 @@ VIEWS.dashboard = async () => {
     <button class="btn fill" onclick="subScore(${m.id}, this)">স্কোর পাঠাও</button></div>`).join('') || '<div class="empty">জমা দেওয়ার মতো কোনো ম্যাচ নেই।</div>'}</div>
   <div class="rd">ম্যাচ ইতিহাস</div>
   <div class="stack">${hist.map(m => { const x = res(m); return `<div class="card fx"><div class="t">${esc(opp(m).name)}</div><div class="sc ${m.status === 'pending' ? 'pend' : ''}">${m.status === 'pending' ? 'অনুমোদনের অপেক্ষায়' : x.a + ' - ' + x.b}</div><div class="t" style="color:${x.r === 'W' ? 'var(--win)' : x.r === 'L' ? 'var(--loss)' : 'var(--gold)'}">${m.status === 'approved' ? (x.r === 'W' ? 'জয়' : x.r === 'L' ? 'হার' : 'ড্র') : ''}</div></div>`; }).join('') || '<div class="empty">এখনো কোনো ইতিহাস নেই।</div>'}</div>
+  <div class="rd">ট্রান্সফার রিকোয়েস্ট</div>
+  <div class="stack">${(tr.data || []).map(t => `<div class="card ar"><span>${esc((S.players.find(p => p.id === t.player_id) || {}).name || 'প্লেয়ার #' + t.player_id)} · ${t.amount}৳</span><span class="tag">${t.status === 'approved' ? 'অনুমোদিত' : t.status === 'rejected' ? 'বাতিল' : 'পেন্ডিং'}</span></div>`).join('') || '<div class="empty">কোনো রিকোয়েস্ট নেই। <a href="#/transfers" style="color:var(--gold2)">ট্রান্সফার মার্কেটে যাও</a></div>'}</div>
   ${out}`);
 };
 window.subScore = async (id, btn) => {
@@ -390,7 +403,7 @@ VIEWS['admin-epf'] = async () => {
   if (!USER) return page('অ্যাডমিন লগইন', `<form class="f card" style="max-width:420px" onsubmit="return adminLogIn(event)">${inp('em','অ্যাডমিন ইমেইল','email','required')}${inp('pw','পাসওয়ার্ড','password','required')}<button class="btn fill" type="submit">লগইন</button><div class="msg" id="msg"></div></form>`);
   const chk = await db.rpc('is_admin');
   if (!chk.data) return page('অ্যাডমিন', noItem('এই অ্যাকাউন্ট অ্যাডমিন নয়।') + '<button class="btn" onclick="logOut()" style="margin-top:16px">লগআউট</button>');
-  const tabs = [['clubs','ক্লাব'],['players','প্লেয়ার'],['scores','স্কোর'],['fixtures','ফিক্সচার'],['news','নিউজ'],['seasons','সিজন']];
+  const tabs = [['clubs','ক্লাব'],['players','প্লেয়ার'],['scores','স্কোর'],['fixtures','ফিক্সচার'],['transfers','ট্রান্সফার'],['news','নিউজ'],['seasons','সিজন'],['settings','সেটিংস']];
   return page('অ্যাডমিন প্যানেল', `<div class="tabs">${tabs.map(([k,l]) => `<button class="btn sm" id="tab-${k}" onclick="adminTab('${k}')">${l}</button>`).join('')}<button class="btn sm" onclick="logOut()">লগআউট</button></div><div id="adBody"></div>`);
 };
 window.adminLogIn = async e => {
@@ -420,8 +433,8 @@ ADT.clubs = async () => {
 ADT.players = async () => {
   const r = await db.from('players').select('*').order('status', {ascending: false}).order('id');
   if (r.error) throw r.error;
-  return '<div class="stack">' + ((r.data || []).map(x => `<div class="card ar"><div><b>${esc(x.name)}</b> <span class="tag ${x.role === 'main' ? 'main' : ''}">${x.role === 'main' ? 'মেইন' : 'সাব'}</span><div class="meta" style="text-align:left">${x.club_id ? cname(x.club_id) : 'ফ্রি এজেন্ট'} · UID: ${esc(x.efootball_uid)} · ${esc(x.device || '')} · WA: ${esc(x.whatsapp || '')}</div></div>
-    <div class="acts"><span class="tag ${x.status === 'approved' ? 'main' : ''}">${x.status === 'approved' ? 'অনুমোদিত' : 'পেন্ডিং'}</span>${x.status !== 'approved' ? `<button class="btn fill sm" onclick="adAct('player','approve',${x.id})">অনুমোদন</button>` : ''}<button class="btn sm" onclick="adAct('player','del',${x.id})">মুছো</button></div></div>`).join('') || noItem('কোনো প্লেয়ার নেই।')) + '</div>';
+  return '<div class="stack">' + ((r.data || []).map(x => `<div class="card ar"><div><b>${esc(x.name)}</b> <span class="tag ${x.role === 'main' ? 'main' : ''}">${x.role === 'main' ? 'মেইন' : 'সাব'}</span><div class="meta" style="text-align:left">${x.club_id ? cname(x.club_id) : 'ফ্রি এজেন্ট'} · UID: ${esc(x.efootball_uid)} · ${esc(x.device || '')} · WA: ${esc(x.whatsapp || '')} · মূল্য: ${x.value || 0}৳</div></div>
+    <div class="acts"><span class="tag ${x.status === 'approved' ? 'main' : ''}">${x.status === 'approved' ? 'অনুমোদিত' : 'পেন্ডিং'}</span>${x.status !== 'approved' ? `<button class="btn fill sm" onclick="adAct('player','approve',${x.id})">অনুমোদন</button>` : ''}<button class="btn sm" onclick="adAct('player','value',${x.id})">মূল্য</button><button class="btn sm" onclick="adAct('player','del',${x.id})">মুছো</button></div></div>`).join('') || noItem('কোনো প্লেয়ার নেই।')) + '</div>';
 };
 ADT.scores = async () => {
   const r = await db.from('matches').select('*').eq('status', 'pending').order('id');
@@ -452,6 +465,17 @@ ADT.seasons = async () => {
     ((r.data || []).map(x => `<div class="card ar"><b>${esc(x.name)}</b><div class="acts">${x.is_active ? '<span class="tag main">সক্রিয়</span>' : `<button class="btn sm" onclick="adAct('season','activate',${x.id})">সক্রিয় করো</button>`}</div></div>`).join('')) + '</div>';
 };
 
+
+ADT.transfers = async () => {
+  const r = await db.from('transfers').select('*').eq('status', 'pending').order('id');
+  if (r.error) throw r.error;
+  const pl = await db.from('players').select('id,name'); const pn = id => esc(((pl.data || []).find(x => x.id === id) || {}).name || '?');
+  return '<div class="stack">' + ((r.data || []).map(t => `<div class="card ar"><div><b>${pn(t.player_id)}</b> → ${cname(t.club_id)}<div class="meta" style="text-align:left">${t.amount}৳ · bKash: ${esc(t.sender_number || '')} · TrxID: ${esc(t.trx_id || '')}</div></div>
+    <div class="acts"><button class="btn fill sm" onclick="adAct('transfer','approve',${t.id})">পেমেন্ট পেয়েছি, অনুমোদন</button><button class="btn sm" onclick="adAct('transfer','reject',${t.id})">বাতিল</button></div></div>`).join('') || noItem('অনুমোদনের অপেক্ষায় কোনো ট্রান্সফার নেই।')) + '</div>';
+};
+ADT.settings = async () => `<div class="card f"><h3>পেমেন্ট সেটিংস</h3>${inp('bk', 'bKash নাম্বার (ট্রান্সফারের টাকা এখানে আসবে)', 'tel', `value="${esc((S.settings || {}).bkash || '')}"`)}<button class="btn fill" onclick="saveBkash()">সেভ করো</button></div>`;
+window.saveBkash = async () => { if (adOk(await db.from('settings').upsert({key: 'bkash', value: val('bk')}))) { await load(); alert('সেভ হয়েছে।'); } };
+
 window.adAct = async (kind, act, id) => {
   let r;
   if (kind === 'club' && act === 'approve') {
@@ -459,7 +483,21 @@ window.adAct = async (kind, act, id) => {
     if (!adOk(r)) return;
     r = await db.from('players').update({status: 'approved'}).eq('club_id', id).eq('is_captain', true);
   } else if (kind === 'club' && act === 'del') { if (!confirm('ক্লাব ও তার প্লেয়ার মুছে যাবে। নিশ্চিত?')) return; r = await db.from('clubs').delete().eq('id', id); }
-  else if (kind === 'player' && act === 'approve') r = await db.from('players').update({status: 'approved'}).eq('id', id);
+  else if (kind === 'player' && act === 'approve') {
+    const g = await db.from('players').select('club_id,value').eq('id', id).single();
+    const upd = {status: 'approved'};
+    if (g.data && !g.data.club_id && !g.data.value) { const v = prompt('এই প্লেয়ারের ট্রান্সফার মূল্য কত টাকা?', '0'); if (v === null) return; upd.value = parseInt(v, 10) || 0; }
+    r = await db.from('players').update(upd).eq('id', id);
+  }
+  else if (kind === 'player' && act === 'value') { const v = prompt('নতুন মূল্য (টাকা)?'); if (v === null) return; r = await db.from('players').update({value: parseInt(v, 10) || 0}).eq('id', id); }
+  else if (kind === 'transfer' && act === 'approve') {
+    const t = await db.from('transfers').select('*').eq('id', id).single(); if (!adOk(t)) return;
+    const mc = await db.from('players').select('id').eq('club_id', t.data.club_id).eq('role', 'main'); if (!adOk(mc)) return;
+    r = await db.from('players').update({club_id: t.data.club_id, role: (mc.data || []).length < 2 ? 'main' : 'sub'}).eq('id', t.data.player_id);
+    if (!adOk(r)) return;
+    r = await db.from('transfers').update({status: 'approved'}).eq('id', id);
+  }
+  else if (kind === 'transfer' && act === 'reject') r = await db.from('transfers').update({status: 'rejected'}).eq('id', id);
   else if (kind === 'player' && act === 'del') { if (!confirm('প্লেয়ার মুছবে?')) return; r = await db.from('players').delete().eq('id', id); }
   else if (kind === 'match' && act === 'approve') r = await db.from('matches').update({status: 'approved'}).eq('id', id);
   else if (kind === 'match' && act === 'reject') r = await db.from('matches').update({status: 'scheduled', home_score: null, away_score: null, screenshot_url: null}).eq('id', id);
@@ -502,8 +540,63 @@ window.genFx = async () => {
   if (adOk(await db.from('matches').insert(rows))) { await load(); alert(rows.length + 'টা ম্যাচ তৈরি হয়েছে।'); adminTab('fixtures'); }
 };
 
+
+// ================= প্লেয়ার রেজিস্ট্রেশন ও ট্রান্সফার মার্কেট =================
+VIEWS['register-player'] = () => DEMO ? page('প্লেয়ার রেজিস্ট্রেশন', needKeys) : page('প্লেয়ার রেজিস্ট্রেশন', `
+<form class="f card" onsubmit="return regPlayer(event)">
+  ${inp('pn','নাম','text','required')}
+  ${inp('uid','eFootball গেম UID','text','required')}
+  ${inp('dv','ডিভাইসের নাম','text','required')}
+  ${inp('wa','WhatsApp নাম্বার','tel','required')}
+  ${inp('fb','Facebook লিংক (ঐচ্ছিক)','url')}
+  ${inp('ig','Instagram লিংক (ঐচ্ছিক)','url')}
+  ${inp('em','ইমেইল','email','required')}
+  ${inp('pw','পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)','password','required minlength="6"')}
+  <button class="btn fill" type="submit">প্লেয়ার হিসেবে রেজিস্টার করো</button>
+  <div class="msg" id="msg"></div>
+  <p class="meta" style="text-align:left">অ্যাডমিন অনুমোদন ও মূল্য ঠিক করলে তুমি ট্রান্সফার মার্কেটে আসবে, তখন ক্লাবগুলো তোমাকে কিনতে পারবে।</p>
+</form>`);
+window.regPlayer = async e => {
+  e.preventDefault();
+  const btn = e.submitter; btn.disabled = true; say('অপেক্ষা করো...', true);
+  try {
+    const r = await db.auth.signUp({email: val('em'), password: val('pw')});
+    if (r.error) throw r.error;
+    if (!r.data.session) throw new Error('ইমেইল কনফার্মেশন চালু আছে। Supabase-এ Confirm email বন্ধ করো।');
+    const p = await db.from('players').insert({club_id: null, name: val('pn'), efootball_uid: val('uid'), device: val('dv'), whatsapp: val('wa'), facebook: val('fb') || null, instagram: val('ig') || null, owner_id: r.data.user.id, role: 'sub', status: 'pending'});
+    if (p.error) throw p.error;
+    USER = r.data.user; location.hash = '#/dashboard';
+  } catch (err) { say(err.message || 'সমস্যা হয়েছে', false); btn.disabled = false; }
+  return false;
+};
+
+VIEWS.transfers = async () => {
+  const bk = (S.settings || {}).bkash;
+  MYCLUB = (USER && db) ? (await db.from('clubs').select('*').eq('owner_id', USER.id).maybeSingle()).data : null;
+  const can = MYCLUB && MYCLUB.status === 'approved';
+  const free = S.players.filter(p => !p.club_id);
+  const rec = (S.transfers || []).map(t => { const p = S.players.find(x => x.id === t.player_id), c = club(t.club_id); return p && c ? `<div class="card ar"><span>${esc(p.name)} → ${esc(c.name)}</span><span class="tag main">${t.amount}৳</span></div>` : ''; }).join('');
+  return page('ট্রান্সফার মার্কেট', `
+  <p class="meta" style="text-align:left;margin-bottom:12px">ফ্রি এজেন্ট প্লেয়ারদের কিনতে bKash-এ টাকা পাঠিয়ে ট্রানজাকশন আইডি দাও। অ্যাডমিন যাচাই করে অনুমোদন দিলে প্লেয়ার তোমার ক্লাবে আসবে।</p>
+  <div class="stack">${free.map(p => `<details class="card"><summary style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b>${esc(p.name)}</b><span class="tag main">${p.value ? p.value + '৳' : 'মূল্য ঠিক হয়নি'}</span></summary>
+    ${!USER ? '<div class="sq"><a href="#/login" style="color:var(--gold2)">কিনতে ক্যাপ্টেন হিসেবে লগইন করো</a></div>'
+      : !can ? '<div class="sq">শুধু অনুমোদিত ক্লাবের ওনার কিনতে পারবে।</div>'
+      : !p.value ? '<div class="sq">অ্যাডমিন এখনো মূল্য ঠিক করেনি।</div>'
+      : `<div class="sq f"><div>${p.value}৳ bKash করো: <b style="color:var(--gold2)">${esc(bk || 'নাম্বার এখনো দেওয়া হয়নি')}</b></div>${inp('sn-' + p.id, 'যে bKash নাম্বার থেকে পাঠিয়েছ', 'tel')}${inp('tx-' + p.id, 'ট্রানজাকশন আইডি (TrxID)')}<button class="btn fill" onclick="buyPlayer(${p.id}, this)">ট্রান্সফার রিকোয়েস্ট পাঠাও</button></div>`}</details>`).join('') || '<div class="empty">এখন মার্কেটে কোনো ফ্রি এজেন্ট নেই।</div>'}</div>
+  <div class="rd">সাম্প্রতিক ট্রান্সফার</div><div class="stack">${rec || '<div class="empty">এখনো কোনো ট্রান্সফার হয়নি।</div>'}</div>
+  <p class="meta" style="text-align:left;margin-top:14px">প্লেয়ার হতে চাও? <a href="#/register-player" style="color:var(--gold2)">প্লেয়ার রেজিস্ট্রেশন</a></p>`);
+};
+window.buyPlayer = async (pid, btn) => {
+  const p = S.players.find(x => x.id === pid), sn = val('sn-' + pid), tx = val('tx-' + pid);
+  if (!sn || !tx) return alert('bKash নাম্বার ও ট্রানজাকশন আইডি দাও।');
+  btn.disabled = true;
+  const r = await db.from('transfers').insert({player_id: pid, club_id: MYCLUB.id, amount: p.value, sender_number: sn, trx_id: tx, status: 'pending'});
+  if (r.error) { alert(r.error.code === '23505' ? 'এই প্লেয়ারের জন্য আগে থেকেই একটা রিকোয়েস্ট পেন্ডিং আছে।' : r.error.message); btn.disabled = false; return; }
+  alert('রিকোয়েস্ট পাঠানো হয়েছে। অ্যাডমিন পেমেন্ট যাচাই করে অনুমোদন দেবে।'); location.hash = '#/dashboard';
+};
+
 VIEWS.more = () => `<div class="wrap"><section><div class="sh"><h2>আরও</h2></div><div class="grid">` +
-  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
+  [['register','ক্লাব রেজিস্ট্রেশন','club'],[USER?'dashboard':'login',USER?'ড্যাশবোর্ড':'ক্যাপ্টেন লগইন','user'],['register-player','প্লেয়ার রেজিস্ট্রেশন','user'],['transfers','ট্রান্সফার মার্কেট','swap'],['players','প্লেয়ার','user'],['compare','ক্লাব তুলনা','vs'],['news','নিউজ','news'],['rules','নিয়মকানুন','rules']]
   .map(([p,l,i]) => `<a class="card" href="#/${p}" style="display:flex;align-items:center;gap:12px;color:var(--gold2)"><span style="width:24px;height:24px;display:inline-block">${svg(i).replace('<svg','<svg style="width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8"')}</span><b>${l}</b></a>`).join('') + `</div></section></div>`;
 
 async function render(){
